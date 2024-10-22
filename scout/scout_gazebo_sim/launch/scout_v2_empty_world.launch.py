@@ -24,7 +24,7 @@ def generate_launch_description():
   robot_name_in_model = 'scout_v2'
   rviz_config_file_path = 'rviz/urdf.rviz'
   urdf_file_path = 'urdf/scout_v2.xacro'
-  world_file_path = 'world/neighborhood.world'
+  world_file_path = 'world/weston_robot_empty.world'
  
   # Pose where we want to spawn the robot
   spawn_x_val = '0.0'
@@ -152,8 +152,13 @@ def generate_launch_description():
   start_gazebo_server_cmd = IncludeLaunchDescription(
     PythonLaunchDescriptionSource(os.path.join(pkg_gazebo_ros, 'launch', 'gzserver.launch.py')),
     condition=IfCondition(use_simulator),
-    # launch_arguments={'world': world}.items()
-    )
+    launch_arguments={
+        'world': world,
+        'verbose': 'true',
+        'gzserver_args': '-s libgazebo_ros_init.so -s libgazebo_ros_factory.so'
+    }.items()
+   )
+
  
   # Start Gazebo client    
   start_gazebo_client_cmd = IncludeLaunchDescription(
@@ -193,7 +198,7 @@ def generate_launch_description():
   ld.add_action(declare_use_robot_state_pub_cmd)  
   ld.add_action(declare_use_rviz_cmd) 
   ld.add_action(declare_use_simulator_cmd)
-  # ld.add_action(declare_world_cmd)
+  ld.add_action(declare_world_cmd)
  
   # ld.add_action(controller)
 
