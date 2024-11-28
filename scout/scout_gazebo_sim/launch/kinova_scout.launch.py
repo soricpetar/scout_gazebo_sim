@@ -2,16 +2,13 @@ import os
 import xacro
 
 from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument, OpaqueFunction, RegisterEventHandler, ExecuteProcess
+from launch.event_handlers import OnProcessStart
 from launch.substitutions import LaunchConfiguration
-from launch.actions import DeclareLaunchArgument, OpaqueFunction, RegisterEventHandler, IncludeLaunchDescription
-from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.event_handlers import OnProcessExit
-from launch.conditions import IfCondition, UnlessCondition
-from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
-from moveit_configs_utils import MoveItConfigsBuilder
+from launch_ros.actions import Node
+from launch.conditions import UnlessCondition
 
-import time
 def launch_setup(context, *args, **kwargs):
     # Initialize Arguments
     robot_ip = LaunchConfiguration("robot_ip")
@@ -25,59 +22,30 @@ def launch_setup(context, *args, **kwargs):
     # Paths
     pkg_share = get_package_share_directory('scout_description')
     xacro_file = os.path.join(pkg_share, 'urdf', 'scout_kinova.xacro')
-    robot_description_content = xacro.process_file(xacro_file, mappings={"use_fake_hardware": use_fake_hardware.perform(context)}).toxml()
+    robot_description_content = xacro.process_file(
+        xacro_file,
+        mappings={"use_fake_hardware": use_fake_hardware.perform(context)}
+    ).toxml()
 
-    # Start Gazebo
-    gazebo = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(
-                get_package_share_directory('gazebo_ros'), 'launch', 'gazebo.launch.py'
-            )
-        ),
-        launch_arguments={'verbose': 'true'}.items(),
-    )
-
-
-    # Spawn robot in Gazebo
-    spawn_entity = Node(
-        package='gazebo_ros',
-        executable='spawn_entity.py',
-        arguments=['-entity', 'scout_kinova', '-topic', 'robot_description'],
+    # Start Gazebo using ExecuteProcess
+    gazebo_process = ExecuteProcess(
+        cmd=['gazebo', '--verbose', '-s', 'libgazebo_ros_factory.so'],
         output='screen'
     )
 
-    # Publish robot state
-    robot_state_publisher = Node(
-        package='robot_state_publisher',
-        executable='robot_state_publisher',
-        name='robot_state_publisher',
-        output='both',
-        parameters=[{'robot_description': robot_description_content}]
+    # Spawn Entity using ExecuteProcess
+    spawn_entity_process = ExecuteProcess(
+        cmd=[
+            'ros2', 'run', 'gazebo_ros', 'spawn_entity.py',
+            '-entity', 'scout_kinova',
+            '-topic', 'robot_description'
+        ],
+        output='screen'
     )
 
-    launch_arguments = {
-        "robot_ip": robot_ip,
-        "use_fake_hardware": use_fake_hardware,
-        "gripper": "robotiq_2f_85",
-        "gripper_joint_name": "",
-        "dof": "7",
-        "gripper_max_velocity": gripper_max_velocity,
-        "gripper_max_force": gripper_max_force,
-        "use_internal_bus_gripper_comm": use_internal_bus_gripper_comm,
-    }
-
-    # Static TF
-    static_tf = Node(
-        package="tf2_ros",
-        executable="static_transform_publisher",
-        name="static_transform_publisher",
-        output="log",
-        arguments=["--frame-id", "world", "--child-frame-id", "base_link"],
-    )
-
-    # ros2_control using FakeSystem as hardware
+    # Controller Node
     ros2_controllers_path = os.path.join(
-        get_package_share_directory("scout_description"),
+        pkg_share,
         "config",
         "ros2_controllers.yaml",
     )
@@ -92,8 +60,22 @@ def launch_setup(context, *args, **kwargs):
         arguments=["--ros-args", "--params-file", ros2_controllers_path]
     )
 
+    # Other Nodes
+    robot_state_publisher = Node(
+        package='robot_state_publisher',
+        executable='robot_state_publisher',
+        name='robot_state_publisher',
+        output='both',
+        parameters=[{'robot_description': robot_description_content}]
+    )
 
-    time.sleep(5)
+    static_tf2 = Node(
+        package="tf2_ros",
+        executable="static_transform_publisher",
+        name="static_transform_publisher",
+        output="log",
+        arguments=["--frame-id", "world", "--child-frame-id", "base_link"],
+    )
 
     robot_traj_controller_spawner = Node(
         package="controller_manager",
@@ -119,6 +101,7 @@ def launch_setup(context, *args, **kwargs):
         arguments=["fault_controller", "-c", "/controller_manager"],
         condition=UnlessCondition(use_fake_hardware),
     )
+
     joint_state_broadcaster_spawner = Node(
         package="controller_manager",
         executable="spawner",
@@ -129,21 +112,45 @@ def launch_setup(context, *args, **kwargs):
         ],
     )
 
+    # Event Handlers to enforce launch order
+    delay_spawn_entity = RegisterEventHandler(
+        event_handler=OnProcessStart(
+            target_action=gazebo_process,
+            on_start=[spawn_entity_process],
+        )
+    )
+
+    delay_ros2_control_node = RegisterEventHandler(
+        event_handler=OnProcessStart(
+            target_action=spawn_entity_process,
+            on_start=[ros2_control_node],
+        )
+    )
+
+    delay_other_nodes = RegisterEventHandler(
+        event_handler=OnProcessStart(
+            target_action=ros2_control_node,
+            on_start=[
+                robot_state_publisher,
+                joint_state_broadcaster_spawner,
+                robot_traj_controller_spawner,
+                robot_pos_controller_spawner,
+                # robot_hand_controller_spawner,  # Uncomment if needed
+                fault_controller_spawner,
+                static_tf2,
+            ],
+        )
+    )
+
+    # Nodes to start
     nodes_to_start = [
-        gazebo,
-        ros2_control_node,
-        robot_state_publisher,
-        joint_state_broadcaster_spawner,
-        robot_traj_controller_spawner,
-        robot_pos_controller_spawner,
-        #robot_hand_controller_spawner,
-        fault_controller_spawner,
-        static_tf,
-        spawn_entity,
+        gazebo_process,
+        delay_spawn_entity,
+        delay_ros2_control_node,
+        delay_other_nodes,
     ]
 
     return nodes_to_start
-
 
 def generate_launch_description():
     # Declare arguments
@@ -151,7 +158,7 @@ def generate_launch_description():
     declared_arguments.append(
         DeclareLaunchArgument(
             "robot_ip",
-            default_value = "0.0.0.0",
+            default_value="0.0.0.0",
             description="IP address by which the robot can be reached.",
         )
     )
@@ -187,7 +194,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "use_external_cable",
             default_value="false",
-            description="Max force for gripper commands",
+            description="Use external cable for gripper communication",
         )
     )
     declared_arguments.append(
@@ -197,7 +204,6 @@ def generate_launch_description():
             description="Use simulated clock",
         )
     )
-
     declared_arguments.append(
         DeclareLaunchArgument(
             "gripper_joint_name",

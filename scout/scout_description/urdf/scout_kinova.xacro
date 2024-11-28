@@ -22,14 +22,14 @@
     <xacro:property name="gripper_max_force" value="100.0" />
     <xacro:property name="gripper_joint_name" value="robotiq_2f_85_joint"/>
     <xacro:property name="use_fake_hardware" value="true" />
-    <xacro:property name="fake_sensor_commands" value="false" />
-    <xacro:property name="sim_gazebo" value="false" />
+    <xacro:property name="mock_sensor_commands" value="false" />
+    <xacro:property name="sim_gazebo" value="true" />
     <xacro:property name="sim_ignition" value="false" />
     <xacro:property name="sim_isaac" value="false" />
     <xacro:property name="isaac_joint_commands" value="/isaac_joint_commands" />
     <xacro:property name="isaac_joint_states" value="/isaac_joint_states" />
     <xacro:property name="use_external_cable" value="false" />
-    <xacro:property name="initial_positions" value="${dict(joint_1=0.0,joint_2=0.0,joint_3=0.0,joint_4=0.0,joint_5=0.0,joint_6=0.0,joint_7=0.0)}" />
+    <xacro:property name="initial_positions" value="${dict(arm_joint_1=0.0,arm_joint_2=0.0,arm_joint_3=0.0,arm_joint_4=0.0,arm_joint_5=0.0,arm_joint_6=0.0,arm_joint_7=0.0)}" />
 
     <xacro:include filename="$(find scout_description)/urdf/scout_wheel_type1.xacro" />
     <xacro:include filename="$(find scout_description)/urdf/scout_wheel_type2.xacro" />
@@ -136,7 +136,7 @@
         gripper_max_velocity="${gripper_max_velocity}"
         gripper_max_force="${gripper_max_force}"
         use_fake_hardware="${use_fake_hardware}"
-        fake_sensor_commands="${fake_sensor_commands}"
+        mock_sensor_commands="${mock_sensor_commands}"
         sim_gazebo="${sim_gazebo}"
         sim_ignition="${sim_ignition}"
         sim_isaac="${sim_isaac}"
