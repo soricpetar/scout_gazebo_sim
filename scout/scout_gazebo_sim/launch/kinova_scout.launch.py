@@ -1,49 +1,78 @@
 import os
-import xacro
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, OpaqueFunction, RegisterEventHandler, ExecuteProcess
-from launch.event_handlers import OnProcessStart
+from launch.actions import (
+    DeclareLaunchArgument,
+    OpaqueFunction,
+    IncludeLaunchDescription,
+    RegisterEventHandler,
+)
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from ament_index_python.packages import get_package_share_directory
 from launch_ros.actions import Node
-from launch.conditions import UnlessCondition
+from launch.conditions import IfCondition
+from time import sleep
+from launch.event_handlers import OnShutdown
+
 
 def launch_setup(context, *args, **kwargs):
-    # Initialize Arguments
-    robot_ip = LaunchConfiguration("robot_ip")
-    use_fake_hardware = LaunchConfiguration("use_fake_hardware")
-    gripper_max_velocity = LaunchConfiguration("gripper_max_velocity")
-    gripper_max_force = LaunchConfiguration("gripper_max_force")
-    launch_rviz = LaunchConfiguration("launch_rviz")
-    use_sim_time = LaunchConfiguration("use_sim_time")
-    use_internal_bus_gripper_comm = LaunchConfiguration("use_internal_bus_gripper_comm")
+    # initialize arguments
+    sim_ignition = LaunchConfiguration("sim_ignition")
 
-    # Paths
-    pkg_share = get_package_share_directory('scout_description')
-    xacro_file = os.path.join(pkg_share, 'urdf', 'scout_kinova.xacro')
-    robot_description_content = xacro.process_file(
-        xacro_file,
-        mappings={"use_fake_hardware": use_fake_hardware.perform(context)}
-    ).toxml()
+    # paths
+    pkg_share = get_package_share_directory("scout_description")
+    sdf_file = os.path.join(pkg_share, "urdf", "output.sdf")
+    urdf_file = os.path.join(pkg_share, "urdf", "output.urdf")
 
-    # Start Gazebo using ExecuteProcess
-    gazebo_process = ExecuteProcess(
-        cmd=['gazebo', '--verbose', '-s', 'libgazebo_ros_factory.so'],
-        output='screen'
+    # read the robot description from the urdf file
+    with open(urdf_file, 'r') as infp:
+        robot_description_content = infp.read()
+
+    robot_description = {"robot_description": robot_description_content}
+
+    # start ignition gazebo
+    ignition_launch_description = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                get_package_share_directory("ros_gz_sim"),
+                "launch",
+                "gz_sim.launch.py",
+            )
+        ),
+        launch_arguments={"gz_args": "-r -v 3"}.items(),
+        condition=IfCondition(sim_ignition),
     )
-
-    # Spawn Entity using ExecuteProcess
-    spawn_entity_process = ExecuteProcess(
-        cmd=[
-            'ros2', 'run', 'gazebo_ros', 'spawn_entity.py',
-            '-entity', 'scout_kinova',
-            '-topic', 'robot_description'
+    sleep(2)
+    # spawn entity into ignition gazebo
+    spawn_entity = Node(
+        package="ros_gz_sim",
+        executable="create",
+        output="screen",
+        arguments=[
+            "-file",
+            sdf_file,
+            "-name",
+            "scout_kinova",
+            "-allow_renaming",
+            "true",
+            "-x",
+            "0.0",
+            "-y",
+            "0.0",
+            "-z",
+            "1",
+            "-R",
+            "0.0",
+            "-P",
+            "0.0",
+            "-Y",
+            "0.0",
         ],
-        output='screen'
+        condition=IfCondition(sim_ignition),
     )
 
-    # Controller Node
+    # controller node
     ros2_controllers_path = os.path.join(
         pkg_share,
         "config",
@@ -52,21 +81,20 @@ def launch_setup(context, *args, **kwargs):
     ros2_control_node = Node(
         package="controller_manager",
         executable="ros2_control_node",
-        parameters=[ros2_controllers_path],
-        remappings=[
-            ("/controller_manager/robot_description", "/robot_description"),
-        ],
+        parameters=[robot_description, ros2_controllers_path],
         output="screen",
-        arguments=["--ros-args", "--params-file", ros2_controllers_path]
+        remappings=[
+            ("/joint_states", "/scout_kinova/joint_states"),
+        ],
     )
 
-    # Other Nodes
+    # other nodes
     robot_state_publisher = Node(
-        package='robot_state_publisher',
-        executable='robot_state_publisher',
-        name='robot_state_publisher',
-        output='both',
-        parameters=[{'robot_description': robot_description_content}]
+        package="robot_state_publisher",
+        executable="robot_state_publisher",
+        name="robot_state_publisher",
+        output="both",
+        parameters=[robot_description],
     )
 
     static_tf2 = Node(
@@ -89,19 +117,6 @@ def launch_setup(context, *args, **kwargs):
         arguments=["twist_controller", "--inactive", "-c", "/controller_manager"],
     )
 
-    robot_hand_controller_spawner = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=["robotiq_gripper_controller", "-c", "/controller_manager"],
-    )
-
-    fault_controller_spawner = Node(
-        package="controller_manager",
-        executable="spawner",
-        arguments=["fault_controller", "-c", "/controller_manager"],
-        condition=UnlessCondition(use_fake_hardware),
-    )
-
     joint_state_broadcaster_spawner = Node(
         package="controller_manager",
         executable="spawner",
@@ -112,103 +127,61 @@ def launch_setup(context, *args, **kwargs):
         ],
     )
 
-    # Event Handlers to enforce launch order
-    delay_spawn_entity = RegisterEventHandler(
-        event_handler=OnProcessStart(
-            target_action=gazebo_process,
-            on_start=[spawn_entity_process],
-        )
+    # ros_gz_bridge node to bridge topics
+    bridge = Node(
+        package="ros_gz_bridge",
+        executable="parameter_bridge",
+        arguments=[
+            "/clock@rosgraph_msgs/msg/Clock@ignition.msgs.Clock",
+            # add other topics to bridge if necessary
+        ],
+        output="screen",
     )
 
-    delay_ros2_control_node = RegisterEventHandler(
-        event_handler=OnProcessStart(
-            target_action=spawn_entity_process,
-            on_start=[ros2_control_node],
-        )
-    )
+    # event handlers for shutdown
+    def on_shutdown(event, context):
+        print("shutting down gracefully...")
 
-    delay_other_nodes = RegisterEventHandler(
-        event_handler=OnProcessStart(
-            target_action=ros2_control_node,
-            on_start=[
+    shutdown_handler = RegisterEventHandler(
+        OnShutdown(
+            on_shutdown=[
+                ignition_launch_description,
+                spawn_entity,
+                bridge,
+                ros2_control_node,
                 robot_state_publisher,
                 joint_state_broadcaster_spawner,
                 robot_traj_controller_spawner,
                 robot_pos_controller_spawner,
-                # robot_hand_controller_spawner,  # Uncomment if needed
-                fault_controller_spawner,
                 static_tf2,
-            ],
+            ]
         )
     )
 
-    # Nodes to start
     nodes_to_start = [
-        gazebo_process,
-        delay_spawn_entity,
-        delay_ros2_control_node,
-        delay_other_nodes,
+        ignition_launch_description,
+        spawn_entity,
+        bridge,
+        ros2_control_node,
+        robot_state_publisher,
+        joint_state_broadcaster_spawner,
+        robot_traj_controller_spawner,
+        robot_pos_controller_spawner,
+        static_tf2,
+        shutdown_handler,
     ]
 
     return nodes_to_start
 
+
 def generate_launch_description():
-    # Declare arguments
+    # declare arguments
     declared_arguments = []
     declared_arguments.append(
         DeclareLaunchArgument(
-            "robot_ip",
-            default_value="0.0.0.0",
-            description="IP address by which the robot can be reached.",
-        )
-    )
-    declared_arguments.append(
-        DeclareLaunchArgument(
-            "use_fake_hardware",
+            "sim_ignition",
             default_value="true",
-            description="Start robot with fake hardware mirroring command to its states.",
-        )
-    )
-    declared_arguments.append(
-        DeclareLaunchArgument(
-            "gripper_max_velocity",
-            default_value="100.0",
-            description="Max velocity for gripper commands",
-        )
-    )
-    declared_arguments.append(
-        DeclareLaunchArgument(
-            "gripper_max_force",
-            default_value="100.0",
-            description="Max force for gripper commands",
-        )
-    )
-    declared_arguments.append(
-        DeclareLaunchArgument(
-            "use_internal_bus_gripper_comm",
-            default_value="true",
-            description="Use arm's internal gripper connection",
-        )
-    )
-    declared_arguments.append(
-        DeclareLaunchArgument(
-            "use_external_cable",
-            default_value="false",
-            description="Use external cable for gripper communication",
-        )
-    )
-    declared_arguments.append(
-        DeclareLaunchArgument(
-            "use_sim_time",
-            default_value="true",
-            description="Use simulated clock",
-        )
-    )
-    declared_arguments.append(
-        DeclareLaunchArgument(
-            "gripper_joint_name",
-            default_value="robotiq_2f_85_joint",
-            description="Name of the gripper joint to be used.",
+            description="use ignition gazebo for simulation",
         )
     )
 

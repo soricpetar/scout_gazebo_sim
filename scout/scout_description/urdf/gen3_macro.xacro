@@ -10,7 +10,7 @@
     parent
     dof
     vision
-    prefix
+    prefix:=arm_
     *origin
     robot_ip
     username:=admin

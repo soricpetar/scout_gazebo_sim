@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 
-<robot name="scout_v2" xmlns:xacro="http://ros.org/wiki/xacro">
+<robot name="scout_kinova" xmlns:xacro="http://ros.org/wiki/xacro">
 
     <!-- Define Properties -->
     <xacro:property name="robot_namespace" value="/" />
@@ -23,8 +23,8 @@
     <xacro:property name="gripper_joint_name" value="robotiq_2f_85_joint"/>
     <xacro:property name="use_fake_hardware" value="true" />
     <xacro:property name="mock_sensor_commands" value="false" />
-    <xacro:property name="sim_gazebo" value="true" />
-    <xacro:property name="sim_ignition" value="false" />
+    <xacro:property name="sim_gazebo" value="false" />
+    <xacro:property name="sim_ignition" value="true" />
     <xacro:property name="sim_isaac" value="false" />
     <xacro:property name="isaac_joint_commands" value="/isaac_joint_commands" />
     <xacro:property name="isaac_joint_states" value="/isaac_joint_states" />
@@ -48,6 +48,7 @@
 
     <xacro:property name="wheel_length" value="1.1653e-01" />
     <xacro:property name="wheel_radius" value="1.6459e-01" />
+
 
     <!-- Base link -->
     <link name="base_link">

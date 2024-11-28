@@ -13,7 +13,7 @@
     isaac_joint_states:=/isaac_joint_states
     use_internal_bus_gripper_comm:=true
     tf_prefix
-    initial_positions:=${dict(joint_1=0.0,joint_2=0.0,joint_3=0.0,joint_4=0.0,joint_5=0.0,joint_6=0.0,joint_7=0.0)}
+    initial_positions:=${dict(arm_joint_1=0.0,arm_joint_2=0.0,arm_joint_3=0.0,arm_joint_4=0.0,arm_joint_5=0.0,arm_joint_6=0.0,arm_joint_7=0.0)}
     robot_ip
     username
     password
@@ -31,7 +31,17 @@
           <plugin>gazebo_ros2_control/GazeboSystem</plugin>
         </xacro:if>
         <xacro:if value="${sim_ignition}">
-          <plugin>ign_ros2_control/IgnitionSystem</plugin>
+        <!-- Gazebo plugins -->
+          <gazebo reference="world">
+          </gazebo>
+          <gazebo>
+            <plugin filename="libign_ros2_control-system.so" name="ign_ros2_control::IgnitionROS2ControlPlugin">
+              <controller_manager_node_name>controller_manager</controller_manager_node_name>
+            </plugin>
+            <plugin filename="libignition-gazebo-sensors-system.so" name="ignition::gazebo::systems::Sensors">
+              <render_engine>ogre</render_engine>
+            </plugin>
+          </gazebo>
         </xacro:if>
         <xacro:if value="${sim_isaac}">
           <plugin>topic_based_ros2_control/TopicBasedSystem</plugin>
